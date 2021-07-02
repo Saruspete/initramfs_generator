@@ -1,0 +1,52 @@
+#!/bin/bash
+
+if [[ $$ -ne 1 ]]; then
+	echo >&2 "This script is an init. Run it in a VM or as an initramfs"
+	exit 1
+fi
+
+typeset MYSELF="$(realpath $0)"
+typeset MYPATH="${MYSELF%/*}"
+
+set -o nounset -o noclobber
+export LC_ALL=C
+export PATH="/bin:/sbin:/usr/bin:/usr/sbin:$PATH"
+export PS4=' (${BASH_SOURCE##*/}:$LINENO ${FUNCNAME[0]:-main})  '
+
+
+function getVal {
+	typeset key="$1"
+
+	typeset tuple
+	for tuple in "$(< /proc/cmdline)"; do
+		if [[ "${tuple%%=*}" == "$key" ]]; then
+			echo "${tuple#*=}"
+		fi
+	done
+}
+
+
+
+# Setup system
+mount -t proc  none /proc
+mount -t sysfs none /sys
+mount -t tmpfs -o size=1g tmpfs /mnt/ramdisk
+
+
+# Setup network
+ip link set eno1 up
+
+
+#echo b > /proc/sysrq-trigger
+
+
+#cat >| "/stress/prime.ini" <<-EOT
+#		TortureThreads=    ; Default is to detect automatically.
+#		MinTortureFFT=8    ; In K
+#		MaxTortureFFT=4096 ; In K
+#		TortureMem=8       ; In MiB. Value is per thread.
+#		TortureTime=15     ; In minutes
+#EOT
+
+echo "===== Running stress test mprime"
+/stress/mprime -t
