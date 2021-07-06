@@ -36,6 +36,11 @@ ammOptparse::AddOpt    "--ldlib="  "Additionnal LD_LIBRARY_PATH to set"    "$PAT
 # Early parsing for chroot
 ammOptparse::Parse "chroot"
 PATH_ROOT="$(ammOptparse::Get "chroot")"
+if [[ -n "$PATH_ROOT" ]] && ! [[ -d "$PATH_ROOT/usr" ]]; then
+	ammLog::Error "Invalid chroot '$PATH_ROOT': no /usr path inside"
+	exit 1
+fi
+
 typeset -a KERN_VERSIONS=()
 typeset    KERN_MODPATH="$PATH_ROOT/lib/modules"
 if [[ -d "$KERN_MODPATH" ]]; then
@@ -44,7 +49,10 @@ if [[ -d "$KERN_MODPATH" ]]; then
 		k="${k%%/*}"
 		KERN_VERSIONS+=($k)
 	done
+else
+	ammLog::Error "Missing kernel modules path as '$KERN_MODPATH'"
 fi
+
 [[ -z "${KERN_VERSION:-}" ]] && KERN_VERSIONS=("$(uname -r)")
 
 ammOptparse::AddOptGroup "core" "Core elements"
@@ -84,7 +92,23 @@ function kmodFindPath {
 	typeset kernVers="${2:-$(uname -r)}"
 	typeset basePath="${3:-}"
 
-	modinfo --basedir "$basePath" -k "$kernVers" -F filename "$kmodName"
+	typeset kmodPath="$(modinfo --basedir "$basePath" -k "$kernVers" -F filename "$kmodName" 2>/dev/null)"
+	# Remove the name: line that may appear when builtin
+	kmodPath="${kmodPath##name:*$'\n'}"
+
+	# No output at all (shouldn't be the case)
+	if [[ -z "$kmodPath" ]]; then
+		ammLog::Error "Unable to find module '$kmodName' for '$kernVers' in '${basePath:-/}'"
+		return 1
+	fi
+
+	# No output but module found = builtin
+	if [[ "$kmodPath" == "(builtin)" ]]; then
+		ammLog::Info "Module '$kmodName' is builtin for '$kernVers' in '${basePath:-/}'"
+		return 0
+	fi
+
+	echo "$kmodPath"
 }
 
 typeset -A __KMOD_DEPENDS_FOUND
@@ -102,10 +126,15 @@ function kmodDepends {
 
 	# Reset on first call
 	if [[ "$level" == "0" ]]; then
+		#set -x
 		__KMOD_DEPENDS_FOUND=()
 		# Validate entry
-		modinfo --basedir "$basePath" -k "$kernVers" -F name $kmodName
+		typeset kmodNameFound=""
+		kmodNameFound="$(modinfo --basedir "$basePath" -k "$kernVers" -F name $kmodName 2>/dev/null)"
 		[[ $? -ne 0 ]] && return
+
+		# modinfo v28+ seems to add the type
+		echo ${kmodNameFound#name:}
 	fi
 	level+=1
 
@@ -120,7 +149,10 @@ function kmodDepends {
 
 	typeset depsLine
 	while read depsLine; do
-		[[ -z "$depsLine" ]] && break
+		# skip lines coming from (builtin) modules
+		[[ "${depsLine#name:}" != "$depsLine" ]] && continue
+		[[ -z "$depsLine" ]] && continue
+
 		typeset deps="${depsLine//,/ }"
 		typeset dep=
 		# Replace - with _ to be constant in naming
@@ -136,7 +168,8 @@ function kmodDepends {
 		done
 
 	done < <(modinfo --basedir "$basePath" -k "$kernVers" -F depends "$kmodName" 2>/dev/null)
-	
+
+	#[[ "$level" == "1" ]] && set +x
 }
 
 # @description  Reimplementation ldd
@@ -145,8 +178,10 @@ function _ldd {
 
 	# If we have PATH_ROOT set, we need to call directly within the env (and skip ldd)
 	if [[ -n "$PATH_ROOT" ]]; then
-		export LD_LIBRARY_PATH+="$CHROOT_LDLIB_PATH"
-		echo >&2 "$LD_LIBRARY_PATH"
+		# Only add path once
+		if [[ -z "${LD_LIBRARY_PATH:-}" ]] || ! [[ "${LD_LIBRARY_PATH//$CHROOT_LDLIB_PATH/}" != "$LD_LIBRARY_PATH" ]]; then
+			export LD_LIBRARY_PATH+="$CHROOT_LDLIB_PATH"
+		fi
 	fi
 
 	# test multiple runtime ld
@@ -314,8 +349,8 @@ mkdir -p "$PATH_TEMP/"{etc,dev/{pts,shm},proc,sys,usr,var,run,home,root}
 
 for i in bin sbin lib lib64; do
 	mkdir -p "$PATH_TEMP/$i"
-	# create / => /usr symlink
-	ln -s "../$i" "$PATH_TEMP/usr/$i"
+	# create / => /usr symlink if not exists
+	! [[ -e "$PATH_TEMP/usr/$i" ]] && ln -s "../$i" "$PATH_TEMP/usr/$i"
 done
 
 chrootFileAdd /dev/{full,null,zero,random,urandom,console,kmsg,mem,ptmx,tty,tty{0..8}}
