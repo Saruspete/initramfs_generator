@@ -301,7 +301,7 @@ function chrootFileAdd {
 		dst="${dst#$PATH_ROOT}"
 
 		if ! [[ -e "$src" ]]; then
-			ammLog::Warning "Non existing file '$file'. Skipping"
+			ammLog::Warning "Cannot add non-existing file '$file'. Skipping"
 			continue
 		fi
 
@@ -388,15 +388,22 @@ chmod +x "$PATH_TEMP/init"
 
 # Core
 chrootFileAdd /lib64/ld-linux-x86-64.so.2 /lib64/libc.so.6
+
 # Utilities
 chrootFileAdd $(binFindDeps sleep cat ls ps bash sh realpath date)
+
 # Filesystem
 chrootFileAdd $(binFindDeps mount)
+
 # Network
-chrootFileAdd $(binFindDeps ip devlink ethtool dhcpcd wget curl)
+chrootFileAdd $(binFindDeps ip devlink)
+for file in ethtool dhcpcd dhclient wget curl; do
+	binFind "$file" >/dev/null || continue
+	chrootFileAdd $(binFindDeps "$file")
+done
 
 # Stress-test
-chrootFileAdd $MYPATH/extra/mersenne $(binFindDeps $MYPATH/extra/mersenne/mprime)
+#chrootFileAdd $MYPATH/extra/mersenne $(binFindDeps $MYPATH/extra/mersenne/mprime)
 
 # Extra packages
 if [[ -n "${ADD_PATHS:-}" ]]; then
