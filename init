@@ -1,9 +1,17 @@
 #!/bin/bash
 
+set -x
+
+# Some sanity checks
 if [[ $$ -ne 1 ]]; then
 	echo >&2 "This script is an init. Run it in a VM or as an initramfs"
 	exit 1
 fi
+
+# reboot in case of termination
+function initExit { echo b > /proc/sysrq-trigger; }
+trap initExit EXIT
+
 
 typeset MYSELF="$(realpath $0)"
 typeset MYPATH="${MYSELF%/*}"
@@ -13,6 +21,10 @@ export LC_ALL=C
 export PATH="/bin:/sbin:/usr/bin:/usr/sbin:$PATH"
 export PS4=' (${BASH_SOURCE##*/}:$LINENO ${FUNCNAME[0]:-main})  '
 
+function logDebug   { echo >&2 "[DBG] $@"; }
+function logInfo    { echo >&2 "[INF] $@"; }
+function logWarning { echo >&2 "[WRN] $@"; }
+function logError   { echo >&2 "[ERR] $@"; }
 
 function getVal {
 	typeset key="$1"
@@ -33,11 +45,10 @@ mount -t sysfs none /sys
 mount -t tmpfs -o size=1g tmpfs /mnt/ramdisk
 
 
-# Setup network
-ip link set eno1 up
+# Setup network (just "eth*" no udev to rename)
+ip link set eth0 up
 
 
-#echo b > /proc/sysrq-trigger
 
 
 #cat >| "/stress/prime.ini" <<-EOT
@@ -48,5 +59,59 @@ ip link set eno1 up
 #		TortureTime=15     ; In minutes
 #EOT
 
-echo "===== Running stress test mprime"
-/stress/mprime -t
+#echo "===== Running stress test mprime"
+#/stress/mprime -t
+
+# If we need to reexec into something else
+typeset initExec="$(getVal "init.exec")"
+if [[ -n "$initExec" ]]; then
+	logInfo "Executing '$initExec' from bootparam"
+	if [[ -x "$initExec" ]]; then
+		exec $initExec
+	else
+		logError "Not executable, Fallback to /bin/bash"
+		exec /bin/bash
+	fi
+fi
+
+
+# Try to use our scripts in lexicographical order
+for file in /init.d/*; do
+	# Execute script
+	if [[ -x "$file" ]]; then
+		"$file"
+	fi
+done
+
+# #############################################################################
+#
+# Cleanup
+#
+# #############################################################################
+
+sync
+
+# Umount all blockdevices
+typeset -a mntToUmount
+while read blk mnt type junk; do
+	if [[ "${blk:0:1}" == "/" ]]; then
+		mntToUmount+=("$mnt")
+	fi
+done < /proc/mounts
+
+typeset -i i="${#mntToUmount[@]}"
+while [[ $i -gt 0 ]]; do
+	typeset mnt="$mntToUmount[$(($i-1))]"
+	logInfo "Umounting '$mnt'"
+	umount "$mnt"
+	if [[ $? -ne 0 ]]; then
+		logError "Error during umount of '$mnt'."
+	fi
+	i+=-1
+done
+
+
+
+logInfo "Init ended. Will reboot from sysrq"
+
+
