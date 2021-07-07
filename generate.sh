@@ -348,7 +348,8 @@ function chrootFileAdd {
 		fi
 
 		# skip existing files
-		[[ -e "$PATH_TEMP/$dst" ]] && [[ "$src" -ef "$dst" ]] && continue
+		#[[ -e "$PATH_TEMP/$dst" ]] && [[ "$src" -ef "$dst" ]] && continue
+		[[ -f "$PATH_TEMP/$dst" ]] && continue
 
 		# Dereference all symlinks if needed
 		if [[ -L  "$src" ]]; then
