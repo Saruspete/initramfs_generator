@@ -21,8 +21,8 @@ ammLib::Require "optparse" "pkg" "string"
 ammExec::Require "modinfo" "awk" "head" "tr" "head" "cp" "readlink"
 
 typeset    PATH_ROOT=""
-typeset    PATH_TEMP="$MYPATH/img"
 typeset    PATH_IMAGE="$MYPATH/initramfs-$(date "+%Y-%m-%d_%H-%M-%S").img"
+typeset    PATH_TEMP="%{image}.src"
 typeset    PATH_LDLIB=""
 
 typeset    CORE_INIT="$MYPATH/init"
@@ -33,7 +33,9 @@ ammOptparse::AddOpt "-o|--image="  "Generated image path"                  "$PAT
 ammOptparse::AddOpt "-r|--chroot=" "chroot source to take bin from"        "$PATH_ROOT"
 ammOptparse::AddOpt    "--ldlib="  "Additionnal LD_LIBRARY_PATH to set"    "$PATH_LDLIB"
 
-# Early parsing for chroot
+#
+# Early parsing for chroot and kernel discovery
+#
 ammOptparse::Parse "chroot"
 PATH_ROOT="$(ammOptparse::Get "chroot")"
 if [[ -n "$PATH_ROOT" ]] && ! [[ -d "$PATH_ROOT/usr" ]]; then
@@ -41,10 +43,10 @@ if [[ -n "$PATH_ROOT" ]] && ! [[ -d "$PATH_ROOT/usr" ]]; then
 	exit 1
 fi
 
-typeset -a KERN_VERSIONS=()
+typeset -a KERN_VERSIONS
 typeset    KERN_MODPATH="$PATH_ROOT/lib/modules"
 if [[ -d "$KERN_MODPATH" ]]; then
-	for i in "$KERN_MODPATH"*; do
+	for i in "$KERN_MODPATH"/*; do
 		typeset k="${i##*/modules/}"
 		k="${k%%/*}"
 		KERN_VERSIONS+=($k)
@@ -53,7 +55,12 @@ else
 	ammLog::Error "Missing kernel modules path as '$KERN_MODPATH'"
 fi
 
-[[ -z "${KERN_VERSION:-}" ]] && KERN_VERSIONS=("$(uname -r)")
+[[ -z "${KERN_VERSIONS:-}" ]] && KERN_VERSIONS=("$(uname -r)")
+
+#
+# End of early parsing, resume options parsing
+#
+
 
 ammOptparse::AddOptGroup "core" "Core elements"
 ammOptparse::AddOpt "-i|--init="    "init to be used"                       "$CORE_INIT"
@@ -75,16 +82,51 @@ typeset -a ADD_PATHS=$(ammOptparse::Get "add-path")
 typeset -a ADD_KMODS=$(ammOptparse::Get "add-kmod")
 typeset CHROOT_LDLIB_PATH=""
 
+
+function ldconfigList {
+	typeset file="$1"
+
+	[[ -n "$PATH_ROOT" ]] && file="${PATH_ROOT}${file}"
+
+	# Parse ld.so.conf
+	typeset line
+	while read line; do
+		# Skip comments
+		line="${line%%#*}"
+		[[ -z "$line" ]] && continue
+
+		# recursion
+		if [[ "${line#include}" != "$line" ]]; then
+			line="${line#* }"
+			# usually referenced as "ld.so.conf.d" without prefix
+			[[ "${line#ld.so.conf.d}" != "$line" ]] && line="/etc/$line"
+
+			typeset fileInc
+			for fileInc in ${PATH_ROOT}${line}; do
+				# Don't protect with quotes, as it may have glob
+				$FUNCNAME "${fileInc#$PATH_ROOT}"
+			done
+		else
+			# Real path
+			echo "$line"
+		fi
+
+	done < "$file"
+
+}
+
+
 # Use absolute path
 if [[ -n "$PATH_ROOT" ]]; then
 	PATH_ROOT="$(realpath "$PATH_ROOT")"
 
 	# Add targets
-	for libdir in /lib64 /usr/lib64 /usr/local/lib64 /lib /usr/lib; do
+	for libdir in /lib64 /usr/lib64 /usr/local/lib64 /lib /usr/lib $(ldconfigList "/etc/ld.so.conf"); do
 		CHROOT_LDLIB_PATH+=":$PATH_ROOT/$libdir"
 	done
-fi
 
+	ammLog::Info "Using CHROOT__LDLIB_PATH='$CHROOT_LDLIB_PATH' to honor chroot '$PATH_ROOT'"
+fi
 
 # @description  Find a kernel module from its name or alias
 function kmodFindPath {
@@ -214,7 +256,7 @@ function _ldd {
 			if [[ -e "$file" ]]; then
 				echo "$file"
 			else
-				echo >&2 "$lib"
+				echo ammLog::Error "cannot find lib '$lib' (as file '$file')"
 			fi
 		done
 	done
@@ -306,14 +348,14 @@ function chrootFileAdd {
 		fi
 
 		# skip existing files
-		[[ -e "$PATH_TEMP/$dst" ]] && continue
+		[[ -e "$PATH_TEMP/$dst" ]] && [[ "$src" -ef "$dst" ]] && continue
 
 		# Dereference all symlinks if needed
 		if [[ -L  "$src" ]]; then
 			# If there was a renaming of the symlink, dereference it
 			if [[ "${src#$PATH_ROOT}" != "$dst" ]]; then
+				ammLog::Debug "Adding symlink '$src' as '$dst' by dereferencement"
 				cp --dereference "$src" "$PATH_TEMP/$dst"
-				continue
 
 			# Simple listing, copy it raw but recurse
 			else
@@ -322,8 +364,10 @@ function chrootFileAdd {
 					[[ "${src#*/proc}" != "$src" ]] && break
 					# Copy the symlink
 					[[ -d "$PATH_TEMP/${dst%/*}" ]] || mkdir -p "$PATH_TEMP/${dst%/*}"
+					ammLog::Debug "Adding symlink '$src' as '$dst'"
 					cp -a "$src" "$PATH_TEMP/$dst"
-					# read its target
+
+					# read its target (+ add back PATH_ROOT if symlink was absolute)
 					src="$(readlink "$src")"
 					[[ "${src:0:1}" != "/" ]] && src="${PATH_ROOT}${dst%/*}/$src"
 					dst="${src#$PATH_ROOT}"
@@ -336,16 +380,23 @@ function chrootFileAdd {
 
 		# Copy the file
 		[[ -d "$PATH_TEMP/${dst%/*}" ]] || mkdir -p "$PATH_TEMP/${dst%/*}"
+		ammLog::Debug "Adding file '$src' as '$dst'"
 		cp -a "$src" "$PATH_TEMP/$dst"
 	done
 }
+
+
+typeset -i r=0
+
 
 # #############################################################################
 #
 # Create folder hierarchy and /dev
 #
 # #############################################################################
-mkdir -p "$PATH_TEMP/"{etc,dev/{pts,shm},proc,sys,usr,var,run,home,root}
+ammLog::StepBegin "Preparing image structure"
+
+mkdir -p "$PATH_TEMP/"{etc,dev/{pts,shm},proc,sys,usr,var,run,home,root,mnt,init.d}
 
 for i in bin sbin lib lib64; do
 	mkdir -p "$PATH_TEMP/$i"
@@ -353,29 +404,36 @@ for i in bin sbin lib lib64; do
 	! [[ -e "$PATH_TEMP/usr/$i" ]] && ln -s "../$i" "$PATH_TEMP/usr/$i"
 done
 
-chrootFileAdd /dev/{full,null,zero,random,urandom,console,kmsg,mem,ptmx,tty,tty{0..8}}
-chrootFileAdd /dev/{std{err,in,out},fd}
+chrootFileAdd /dev/{full,null,zero,random,urandom,console,kmsg,mem,ptmx,tty,tty{0..8}} ; r+=$?
+chrootFileAdd /dev/{std{err,in,out},fd} ; r+=$?
+ammLog::StepEnd $r
+
 
 # #############################################################################
 #
 # Copy kernel modules
 #
 # #############################################################################
+
 if [[ -n "${ADD_KMODS:-}" ]]; then
+	ammLog::StepBegin "Processing kernel modules '${ADD_KMODS[@]}"
 	for kmodNeed in "${ADD_KMODS[@]}"; do
 		for krn in "${KERN_VERSIONS[@]}"; do
+			r=0
 			ammLog::StepBegin "Adding module '$kmodNeed' and dependencies, version '$krn' in '${PATH_ROOT:-/}'"
 			for kmod in $(kmodDepends "$kmodNeed" "$krn" "$PATH_ROOT"); do
 				typeset filePath="$(kmodFindPath "$kmod" "$krn" "$PATH_ROOT")"
 				ammLog::Debug "Found for '$kmod': '$filePath'"
 				if [[ -n "$filePath" ]]; then
-					ammLog::Info "Adding mod '$kmod' ($filePath)"
+					ammLog::Info "Adding kmod '$kmod' ($filePath)"
 					chrootFileAdd "$filePath@${filePath#${PATH_ROOT}}"
+					r+=$?
 				fi
 			done
-			ammLog::StepEnd
+			ammLog::StepEnd $r
 		done
 	done
+	ammLog::StepEnd
 fi
 
 # #############################################################################
@@ -383,32 +441,41 @@ fi
 # Copy init and core libraries
 #
 # #############################################################################
-cp "$CORE_INIT" "$PATH_TEMP/init"
-chmod +x "$PATH_TEMP/init"
 
-# Core
-chrootFileAdd /lib64/ld-linux-x86-64.so.2 /lib64/libc.so.6
+r=0
+ammLog::StepBegin "Processing Init"
+ammLog::Info "Copying init script '$CORE_INIT'"
+cp "$CORE_INIT" "$PATH_TEMP/init" ; r+=$?
+chmod +x "$PATH_TEMP/init" ; r+=$?
 
-# Utilities
-chrootFileAdd $(binFindDeps sleep cat ls ps bash sh realpath date)
+ammLog::Info "Adding core tools and basic dependencies"
 
 # Filesystem
-chrootFileAdd $(binFindDeps mount)
+chrootFileAdd $(binFindDeps mount umount sync) ; r+=$?
+
+# Utilities
+chrootFileAdd $(binFindDeps sleep realpath bash sh cat ls ps date) ; r+=$?
 
 # Network
 chrootFileAdd $(binFindDeps ip devlink)
 for file in ethtool dhcpcd dhclient wget curl; do
 	binFind "$file" >/dev/null || continue
-	chrootFileAdd $(binFindDeps "$file")
+	chrootFileAdd $(binFindDeps "$file") ; r+=$?
 done
+
+# Identification
+chrootFileAdd $(binFindDeps dmidecode)
 
 # Stress-test
 #chrootFileAdd $MYPATH/extra/mersenne $(binFindDeps $MYPATH/extra/mersenne/mprime)
 
 # Extra packages
 if [[ -n "${ADD_PATHS:-}" ]]; then
-	chrootFileAdd "${ADD_PATHS[@]}"
+	ammLog::Info "Adding extra paths '${ADD_PATHS[@]}'"
+	chrootFileAdd "${ADD_PATHS[@]}" ; r+=$?
 fi
+
+ammLog::StepEnd $r
 
 
 # #############################################################################
@@ -416,6 +483,8 @@ fi
 # Generate cpio archive
 #
 # #############################################################################
+
+r=0
 ammLog::StepBegin "Creating archive from '$PATH_TEMP'"
 (
 	cd "$PATH_TEMP"
@@ -438,9 +507,9 @@ kernCurrent="${kernCurrent#(*)}"
 
 ammLog::Info "You can test it with:"
 cat <<-EOT
-qemu-system-x86_64 -cpu Skylake-Client \
+qemu-system-x86_64 -cpu Skylake-Client -m 4G \
 -no-reboot -nographic \
--append "console=ttyS0 panic=-1" \
+-append "console=ttyS0 panic=-1 crashkernel=no" \
 -kernel /boot/$kernCurrent \
 -initrd $imgLatest
 EOT
