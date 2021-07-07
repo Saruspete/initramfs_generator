@@ -147,7 +147,8 @@ logInfo "#                     Minimal initrd init"
 logInfo "# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #"
 logInfo "# cmdline: $(</proc/cmdline)"
 logInfo "# cpu: $((1 + $cpuCnt)) * $cpuMod"
-logInfo "# ram: $ramTot"
+logInfo "# ram: $ramTot"	
+logInfo "# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #"
 # Skip id=0 (loopback)
 for ((i=1; i<254; i+=1 )); do
 	if (set +u; [[ -n "${nicsName[$i]}" ]] ); then
@@ -155,16 +156,18 @@ for ((i=1; i<254; i+=1 )); do
 	fi
 done
 
-
 typeset dmiPath="/sys/class/dmi/id"
 if [[ -d "$dmiPath" ]]; then
 	logInfo "# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #"
-	for dmiType in chassis product board; do
-		typeset serialPath="$dmiPath/${dmiType}_serial"  vendorPath="$dmiPath/${dmiType}_vendor"
-		typeset serial= vendor=
+	for dmiType in chassis product board bios; do
+		typeset serialPath="$dmiPath/${dmiType}_serial"
+		typeset vendorPath="$dmiPath/${dmiType}_vendor"
+		typeset versionPath="$dmiPath/${dmiType}_version"
+		typeset serial= vendor= version=
 		[[ -r "$serialPath" ]] && serial="$(<$serialPath)"
 		[[ -r "$vendorPath" ]] && vendor="$(<$vendorPath)"
-		logInfo "# ${dmiType^} serial: $serial    vendor: $vendor"
+		[[ -r "$versionPath" ]] && version="$(<$versionPath)"
+		logInfo "# ${dmiType^} serial: $serial    vendor: $vendor   version: $version"
 	done
 else
 	# try dmidecode
@@ -206,7 +209,9 @@ fi
 for file in /init.d/*; do
 	# Execute script
 	if [[ -x "$file" ]]; then
+		logInfo "Running script '$file'"
 		"$file"
+		logInfo "  return code: $?"
 	fi
 done
 
