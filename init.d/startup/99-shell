@@ -1,0 +1,4 @@
+#!/bin/bash
+
+# Hijack the flow
+exec /bin/bash

@@ -1,0 +1,77 @@
+#!/bin/bash
+
+if [[ -z "$reason" ]]; then
+	echo >&2 "Error: this script must be called by dhclient"
+	exit 1
+fi
+
+
+function QuadToNum {
+	if [[ $# -eq 4 ]]; then
+		echo $(($1 << 24 | $2 << 16 | $3 << 8 | $4))
+		return 0
+	else
+		echo "0"
+		return 1
+	fi
+}
+
+function IPToNum {
+	IFS='.' QuadToNum $1
+}
+
+function NumToIP {
+	echo "$(( ($1 >> 24) & 0xff )).$(( ($1 >> 16) & 0xff )).$(( ($1 >> 8) & 0xff )).$(( $1 & 0xff ))"
+}
+
+function MaskToPrefix {
+	typeset mask="$1"
+
+	typeset -i pfx=0 x=0$( printf '%o' ${mask//./ } )
+	while [ $x -gt 0 ]; do
+		pfx+=$(( $x % 2 ))
+		x=$(( $x >> 1 ))
+	done
+	echo $pfx
+}
+
+# BOUND: Initial binding to a new address
+# RENEW: Same as BOUND but with $old_  too. Some params needs to be updated/cleared
+# REBIND: Has rebound to a new DHCP server. Similar to RENEW but ARP will need to be cleared if Addr has changed
+# REBOOT: Client has reacquired its previous address after a reboot. Same as BOUND
+
+# EXPIRE: Lease has expired and failed to be renewed. IP must be relinquished
+# FAIL: Client was unable to contact any DHCP server. Treat like EXPIRE
+# STOP: Client was shutdown gracefully.
+# RELEASE: admin requested to release
+# NBI: Non Broadcast Interface: unable to find any iface to commence DHCP.
+# TIMEOUT: Unable to contact any DHCP server, but an old lease was identiifed and passed as BOUND.
+#          Script should test params and if are valid, exit 0. Else exit nonzero.
+
+
+# Operation done by dhcp
+case "$reason" in
+	BOUND|RENEW|REBIND|REBOOT)
+		# Called by bound, renew, rebind, reboot
+		typeset ipaddrNew="${new_ip_address:-}" ipaddrOld="${old_ip_address:-}"
+		typeset prefixNew="" prefixOld=""
+		typeset dev="$interface"
+
+		# Get the prefix
+		[[ -n "${new_subnet_mask}" ]] && prefixNew=$(MaskToPrefix "$new_subnet_mask")
+		[[ -n "${old_subnet_mask}" ]] && prefixOld=$(MaskToPrefix "$old_subnet_mask")
+
+		# Called for renew/rebind
+		if [[ -n "$ipaddrOld" ]] && [[ "$ipaddrOld" != "$ipaddrNew" ]]; then
+			ip addr del "$ipaddrOld${prefixOld:+/$prefixOld}" dev "$dev"
+		fi
+
+		# Add the IP
+		ip addr replace "$ipaddrNew/$prefixNew" dev "$dev" \
+			valid_lft "${new_dhcp_lease_time}" preferred_lft "${new_dhcp_lease_time}"
+		
+
+		# TODO: Add routes
+        ;;
+
+esac

@@ -102,7 +102,8 @@ for nicPath in /sys/class/net/*; do
 			dhcp)
 				if type -p "dhclient" >/dev/null; then
 					logInfo "Using dhclient on '$nicName'"
-					dhclient $nicName
+					mkdir -p "/var/lib/dhclient"
+					dhclient -sf /init.d/net.dhclient --timeout 15 $nicName
 				elif type -p "dhcpcd" >/dev/null; then
 					logInfo "Using dhcpcd on '$nicName'"
 					dhcpcd $nicName
@@ -145,10 +146,13 @@ typeset ramTot="${ramInfo##*MemTotal:}";  ramTot="${ramTot%% kB*}"; ramTot="${ra
 logInfo "# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #"
 logInfo "#                     Minimal initrd init"
 logInfo "# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #"
+logInfo "#"
 logInfo "# cmdline: $(</proc/cmdline)"
 logInfo "# cpu: $((1 + $cpuCnt)) * $cpuMod"
-logInfo "# ram: $ramTot"	
+logInfo "# ram: $ramTot"
+logInfo "#"
 logInfo "# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #"
+logInfo "#"
 # Skip id=0 (loopback)
 for ((i=1; i<254; i+=1 )); do
 	if (set +u; [[ -n "${nicsName[$i]}" ]] ); then
@@ -158,7 +162,9 @@ done
 
 typeset dmiPath="/sys/class/dmi/id"
 if [[ -d "$dmiPath" ]]; then
+	logInfo "#"
 	logInfo "# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #"
+	logInfo "#"
 	for dmiType in chassis product board bios; do
 		typeset serialPath="$dmiPath/${dmiType}_serial"
 		typeset vendorPath="$dmiPath/${dmiType}_vendor"
@@ -176,6 +182,7 @@ else
 fi
 
 
+logInfo "#"
 logInfo "# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #"
 logInfo
 
@@ -206,10 +213,10 @@ fi
 
 
 # Try to use our scripts in lexicographical order
-for file in /init.d/*; do
+for file in /init.d/startup/*; do
 	# Execute script
 	if [[ -x "$file" ]]; then
-		logInfo "Running script '$file'"
+		logInfo "Running startup script '$file'"
 		"$file"
 		logInfo "  return code: $?"
 	fi
