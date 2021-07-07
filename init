@@ -9,7 +9,7 @@ if [[ $$ -ne 1 ]]; then
 fi
 
 # reboot in case of termination
-function initExit { echo b > /proc/sysrq-trigger; }
+function initExit { echo b >| /proc/sysrq-trigger; }
 trap initExit EXIT
 
 
@@ -37,7 +37,19 @@ function getVal {
 	done
 }
 
+#
+# Some information
+#
 
+typeset cpuInfo="$(</proc/cpuinfo)"
+typeset cpuCnt="${cpuInfo##*processor}" ; cpuCnt="${cpuCnt%%$'\n'*}"; cpuCnt="${cpuCnt#*: }"
+typeset cpuMod="${cpuInfo##*model name}"; cpuMod="${cpuMod%%$'\n'*}"; cpuMod="${cpuMod#*: }"
+
+logInfo "# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #"
+logInfo "#                     Minimal initrd init"
+logInfo "# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #"
+logInfo "# cmdline: $(</proc/cmdline)"
+logInfo "# cpu: $cpuCnt * $cpuMod"
 
 # Setup system
 mount -t proc  none /proc
@@ -92,7 +104,7 @@ done
 sync
 
 # Umount all blockdevices
-typeset -a mntToUmount
+typeset -a mntToUmount=()
 while read blk mnt type junk; do
 	if [[ "${blk:0:1}" == "/" ]]; then
 		mntToUmount+=("$mnt")
