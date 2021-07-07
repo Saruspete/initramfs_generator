@@ -69,7 +69,7 @@ ammOptparse::AddOpt "-s|--scripts=" "scripts to be run"
 ammOptparse::AddOptGroup "extra"     "Extra content to add"
 ammOptparse::AddOpt "-a|--add-path@"  "Add an extra file or folder into initramfs"
 ammOptparse::AddOpt "-m|--add-kmod@"  "Add an extra kernel module into initramfs"
-ammOptparse::AddOpt "-k|--kernel@"    "Set one or more kernel version to search modules for" "${KERN_VERSIONS[@]}"
+ammOptparse::AddOpt "-k|--kernel@"    "Set one or more kernel version to search modules for" "${KERN_VERSIONS[*]}"
 
 ammOptparse::Parse --no-unknown || ammLog::Die "Options parsing error"
 
