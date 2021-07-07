@@ -397,7 +397,7 @@ typeset -i r=0
 # #############################################################################
 ammLog::StepBegin "Preparing image structure"
 
-mkdir -p "$PATH_TEMP/"{etc,dev/{pts,shm},proc,sys,usr,var,run,home,root,mnt,init.d}
+mkdir -p "$PATH_TEMP/"{etc,dev/{pts,shm},proc,sys,usr,var/run,run,home,root,mnt,init.d}
 
 for i in bin sbin lib lib64; do
 	mkdir -p "$PATH_TEMP/$i"
@@ -451,11 +451,14 @@ chmod +x "$PATH_TEMP/init" ; r+=$?
 
 ammLog::Info "Adding core tools and basic dependencies"
 
+# ldconfig and path resolution
+chrootFileAdd $PATH_ROOT/etc/ld.so*
+
 # Filesystem
 chrootFileAdd $(binFindDeps mount umount sync) ; r+=$?
 
 # Utilities
-chrootFileAdd $(binFindDeps sleep realpath bash sh cat ls ps date) ; r+=$?
+chrootFileAdd $(binFindDeps sleep realpath bash sh cat ls ps rm mkdir date) ; r+=$?
 
 # Network
 chrootFileAdd $(binFindDeps ip devlink)
