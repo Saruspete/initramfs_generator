@@ -247,6 +247,9 @@ function _ldd {
 
 			# When there is no arrow, either lib is abs, either it's name matches
 			if [[ "$arrow" != "=>" ]]; then
+				# Special libs like ld-linux-x86_64.so.2
+				[[ "${lib:0:1}" == "/" ]] && echo "$lib"
+
 				continue
 			fi
 
@@ -449,6 +452,11 @@ ammLog::Info "Copying init script '$CORE_INIT'"
 cp "$CORE_INIT" "$PATH_TEMP/init" ; r+=$?
 chmod +x "$PATH_TEMP/init" ; r+=$?
 
+if [[ -d "$CORE_INIT.d" ]]; then
+	ammLog::Info "Copying init script extra '$CORE_INIT.d'"
+	cp -a "${CORE_INIT}.d/." "$PATH_TEMP/init.d" ; r+=$?
+fi
+
 ammLog::Info "Adding core tools and basic dependencies"
 
 # ldconfig and path resolution
@@ -513,7 +521,7 @@ ammLog::Info "You can test it with:"
 cat <<-EOT
 qemu-system-x86_64 -cpu Skylake-Client -m 4G \
 -no-reboot -nographic \
--append "console=ttyS0 panic=-1 crashkernel=no" \
 -kernel /boot/$kernCurrent \
--initrd $imgLatest
+-initrd $imgLatest \
+-append "quiet console=ttyS0 panic=-1 net.link=dhcp"
 EOT
