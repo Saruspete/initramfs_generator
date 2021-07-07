@@ -56,8 +56,14 @@ mount -t tmpfs -o size=1g tmpfs /mnt/ramdisk
 getVal init.debug && set -x
 
 
+# #############################################################################
+#
+# Network configuration
+#
+# #############################################################################
+
 # Setup network (just "eth*" no udev to rename)
-typeset -A nicName= nicAddress= nicDuplex=
+typeset -A nicsName= nicsAddress= nicsCarrier= nicsDuplex= nicsIp4= nicsSpeed=
 for nicPath in /sys/class/net/*; do
 
 	# Skip virtual NICs
@@ -65,12 +71,63 @@ for nicPath in /sys/class/net/*; do
 
 	typeset nicName="${nicPath##*/}"
 	typeset nicId="$(<$nicPath/ifindex)"
+	typeset nicAddr="$(<$nicPath/address)"
 
+	# Up iface to have link status
+	logInfo "Setting up '$nicName' ($nicAddr)"
 	ip link set "$nicName" up
+	# Wait a bit for carrier to up
+	sleep 1
 
-	nicName[$nicId]="$nicName"
-	nicAddress[$nicId]="$(<"$nicPath/address")"
-	nicDuplex[$nicId]="$(<"$nicPath/carrier")"
+	typeset nicCarrier="$(<$nicPath/carrier)"
+	typeset nicDuplex="$(<$nicPath/duplex)"
+	typeset nicSpeed="$(<$nicPath/speed)"
+
+	nicsName[$nicId]="$nicName"
+	nicsAddress[$nicId]="$nicAddr"
+	nicsCarrier[$nicId]="$nicCarrier"
+	nicsDuplex[$nicId]="$nicDuplex"
+	nicsSpeed[$nicId]="$nicSpeed"
+
+	# More configuration needed
+	typeset netCfg="$(getVal "net.$nicId")"
+	[[ -z "$netCfg" ]] && netCfg="$(getVal "net.$nicName")"
+	[[ -z "$netCfg" ]] && netCfg="$(getVal "net.$nicAddr")"
+	[[ -z "$netCfg" ]] && netCfg="$(getVal "net.${nicAddr//:/}")"
+	[[ -z "$netCfg" ]] && [[ "$nicCarrier" == "1" ]] && netCfg="$(getVal "net.link")"
+	[[ -z "$netCfg" ]] && netCfg="$(getVal "net.all")"
+
+	if [[ -n "$netCfg" ]]; then
+		case "$netCfg" in
+			dhcp)
+				if type -p "dhclient" >/dev/null; then
+					logInfo "Using dhclient on '$nicName'"
+					dhclient $nicName
+				elif type -p "dhcpcd" >/dev/null; then
+					logInfo "Using dhcpcd on '$nicName'"
+					dhcpcd $nicName
+				else
+					logError "No dhcp client available for '$nicName'"
+				fi
+				;;
+			fixed:*)
+				logError "Fixed IP address is not implemented yet"
+				;;
+			*)
+				logError "Unknown parameter value: '$nicCfg'"
+				;;
+		esac
+
+		# Fetch assigned IP Addresses
+		while read line; do
+			ip="${line##*inet }"
+			ip="${ip%% *}"
+			set +u
+			nicsIp4[$nicId]+="$ip "
+			set -u
+		done < <(ip -o -f inet addr show dev $nicName)
+
+	fi
 done
 
 # #############################################################################
@@ -93,8 +150,8 @@ logInfo "# cpu: $((1 + $cpuCnt)) * $cpuMod"
 logInfo "# ram: $ramTot"
 # Skip id=0 (loopback)
 for ((i=1; i<254; i+=1 )); do
-	if (set +u; [[ -n "${nicName[$i]}" ]] ); then
-		logInfo "# nic: id:$i name:${nicName[$i]} addr:${nicAddress[$i]} Duplex:${nicDuplex[$i]}"
+	if (set +u; [[ -n "${nicsName[$i]}" ]] ); then
+		logInfo "# nic: id:$i name:${nicsName[$i]} addr:${nicsAddress[$i]} Carrier:${nicsCarrier[$i]} Duplex:${nicsDuplex[$i]}  Speed:${nicsSpeed[$i]}  IPv4:${nicsIp4[$i]:-}"
 	fi
 done
 
@@ -107,7 +164,7 @@ if [[ -d "$dmiPath" ]]; then
 		typeset serial= vendor=
 		[[ -r "$serialPath" ]] && serial="$(<$serialPath)"
 		[[ -r "$vendorPath" ]] && vendor="$(<$vendorPath)"
-		logInfo " ${dmiType^} serial: $serial    vendor: $vendor"
+		logInfo "# ${dmiType^} serial: $serial    vendor: $vendor"
 	done
 else
 	# try dmidecode
@@ -117,6 +174,7 @@ fi
 
 
 logInfo "# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #"
+logInfo
 
 
 
