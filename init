@@ -156,7 +156,7 @@ logInfo "#"
 # Skip id=0 (loopback)
 for ((i=1; i<254; i+=1 )); do
 	if (set +u; [[ -n "${nicsName[$i]}" ]] ); then
-		logInfo "# nic: id:$i name:${nicsName[$i]} addr:${nicsAddress[$i]} Carrier:${nicsCarrier[$i]} Duplex:${nicsDuplex[$i]}  Speed:${nicsSpeed[$i]}  IPv4:${nicsIp4[$i]:-}"
+		logInfo "# NicId:$i name:${nicsName[$i]} addr:${nicsAddress[$i]} Carrier:${nicsCarrier[$i]} Duplex:${nicsDuplex[$i]}  Speed:${nicsSpeed[$i]}  IPv4:${nicsIp4[$i]:-}"
 	fi
 done
 
