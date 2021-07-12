@@ -35,6 +35,12 @@ function MaskToPrefix {
 	echo $pfx
 }
 
+# Script reference:
+# - https://manpages.debian.org/unstable/isc-dhcp-client/dhclient-script.8.en.html
+# - https://www.freebsd.org/cgi/man.cgi?dhclient-script
+# DHCP Options
+# - https://www.freebsd.org/cgi/man.cgi?query=dhcp-options&sektion=5&apropos=0&manpath=FreeBSD+13.0-RELEASE+and+Ports
+
 # BOUND: Initial binding to a new address
 # RENEW: Same as BOUND but with $old_  too. Some params needs to be updated/cleared
 # REBIND: Has rebound to a new DHCP server. Similar to RENEW but ARP will need to be cleared if Addr has changed
